@@ -9,4 +9,5 @@ Kurumsal BT sistemleri ve ERP dünyasında 25+ yıllık deneyimle proje yönetim
 - 🛠️ **Paylaşımlar:** Proje planı şablonları, risk matrisleri, ERP implementasyon kontrol listeleri
 - 🌐 **Web:** [ahmetyildiz.net](https://ahmetyildiz.net)
 - 🆔 **Wikidata:** [Q139718024](https://www.wikidata.org/wiki/Q139718024)
+- 🔬 **ORCID:** [0009-0004-9723-2904](https://orcid.org/0009-0004-9723-2904)
 - 🤝 **LinkedIn:** [ahmetrecepyildiz](https://www.linkedin.com/in/ahmetrecepyildiz)

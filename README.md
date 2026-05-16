@@ -30,6 +30,14 @@ Türkiye kamu ve özel sektöründe kurumsal ERP sistemleri, dijital dönüşüm
 
 ---
 
+## ✍️ Son Makaleler
+
+- 📄 [ERP Proje Yönetiminde 5 Kritik Başarı Faktörü](articles/erp-basari-faktorleri.md)
+- 📄 [CANIAS ERP ile Dijital Dönüşüm: Sahadan Notlar](articles/canias-dijital-donusum.md)
+- 📄 [PMP ve Agile'ı ERP Projelerinde Nasıl Birleştiriyorum](articles/pmp-agile-erp.md)
+
+---
+
 ## 🔗 Profiller & Yayınlar
 
 | Platform | Bağlantı |
@@ -43,17 +51,6 @@ Türkiye kamu ve özel sektöründe kurumsal ERP sistemleri, dijital dönüşüm
 | 🔬 ORCID | [0009-0004-9723-2904](https://orcid.org/0009-0004-9723-2904) |
 | 🏛️ PMI Community | [Profil](https://community.pmi.org/profile/ahmetrecepyildiz) |
 | 📊 Wikidata | [Q139718024](https://www.wikidata.org/wiki/Q139718024) |
-
----
-
-## 📂 Bu Repoda
-
-Bu GitHub profilinde aşağıdaki kaynakları paylaşıyorum:
-
-- 📋 **ERP Proje Şablonları** — proje planı, risk matrisi, durum raporları
-- ✅ **Kontrol Listeleri** — ERP Go-Live, ISO 27001 denetim, kapsam yönetimi
-- 📈 **Vaka Çalışmaları** — gerçek proje deneyimlerinden anonim örnekler
-- 🛠️ **Araçlar** — proje yönetimi araçları ve çerçeveler
 
 ---
 

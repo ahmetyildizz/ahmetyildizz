@@ -11,3 +11,4 @@ Kurumsal BT sistemleri ve ERP dünyasında 25+ yıllık deneyimle proje yönetim
 - 🆔 **Wikidata:** [Q139718024](https://www.wikidata.org/wiki/Q139718024)
 - 🔬 **ORCID:** [0009-0004-9723-2904](https://orcid.org/0009-0004-9723-2904)
 - 🤝 **LinkedIn:** [ahmetrecepyildiz](https://www.linkedin.com/in/ahmetrecepyildiz)
+- 🎮 **Mini Oyun:** [River Raid Clone](games/river-raid/index.html)

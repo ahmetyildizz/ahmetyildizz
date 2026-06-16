@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>River Raid Clone</title>
+<style>
+  html, body {
+    margin: 0;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-family: 'Courier New', monospace;
+    color: #0f0;
+  }
+  #ui {
+    display: flex;
+    justify-content: space-between;
+    width: 400px;
+    padding: 6px 10px;
+    box-sizing: border-box;
+    font-size: 16px;
+  }
+  canvas {
+    background: #654321;
+    border: 4px solid #444;
+    image-rendering: pixelated;
+  }
+  #overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    font-size: 28px;
+    text-align: center;
+    flex-direction: column;
+  }
+  #overlay button {
+    margin-top: 16px;
+    font-size: 18px;
+    padding: 8px 20px;
+    cursor: pointer;
+  }
+  #hint {
+    font-size: 12px;
+    color: #999;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+  <div id="ui">
+    <div>SKOR: <span id="score">0</span></div>
+    <div>YAKIT: <span id="fuel">100</span></div>
+    <div>CAN: <span id="lives">3</span></div>
+  </div>
+  <canvas id="game" width="400" height="600"></canvas>
+  <div id="hint">Yön tuşları / WASD: hareket | Space: ateş | P: duraklat</div>
+
+  <div id="overlay">
+    <div id="overlayText">River Raid</div>
+    <button id="startBtn">Başla</button>
+  </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const scoreEl = document.getElementById('score');
+const fuelEl = document.getElementById('fuel');
+const livesEl = document.getElementById('lives');
+const overlay = document.getElementById('overlay');
+const overlayText = document.getElementById('overlayText');
+const startBtn = document.getElementById('startBtn');
+
+// ---------- River geometry ----------
+// The river is represented as a list of segments scrolling downward.
+// Each segment has a leftBank and rightBank x-position, generated procedurally.
+const SEGMENT_H = 20;
+let segments = []; // {y, left, right, bridge:false, narrowing}
+
+function initRiver() {
+  segments = [];
+  let left = 60, right = W - 60;
+  for (let y = H; y >= -SEGMENT_H * 4; y -= SEGMENT_H) {
+    segments.push({ y, left, right });
+  }
+}
+
+function genNextSegment(topY) {
+  const last = segments[segments.length - 1];
+  let left = last.left, right = last.right;
+  // randomly drift banks, keep min width
+  const drift = (Math.random() - 0.5) * 14;
+  left = clamp(left + drift, 20, W / 2 - 40);
+  right = clamp(right + drift, W / 2 + 40, W - 20);
+  // occasionally widen/narrow more drastically (islands not modeled, simple river)
+  segments.push({ y: topY - SEGMENT_H, left, right });
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// returns river bank x positions for a given world y by interpolating between segments
+function riverAt(y) {
+  for (let i = 0; i < segments.length - 1; i++) {
+    const a = segments[i], b = segments[i + 1];
+    if (y <= a.y && y >= b.y) {
+      const t = (a.y - y) / (a.y - b.y || 1);
+      return {
+        left: a.left + (b.left - a.left) * t,
+        right: a.right + (b.right - a.right) * t
+      };
+    }
+  }
+  return { left: 60, right: W - 60 };
+}
+
+// ---------- Game State ----------
+let player, bullets, enemies, fuelDepots, particles;
+let scrollY = 0;
+let scrollSpeed = 2;
+let score = 0;
+let fuel = 100;
+let lives = 3;
+let frame = 0;
+let running = false;
+let paused = false;
+let gameOver = false;
+let spawnTimer = 0;
+
+function resetGame() {
+  initRiver();
+  player = {
+    x: W / 2, y: H - 100, w: 22, h: 28,
+    vx: 0, speed: 3, alive: true, cooldown: 0
+  };
+  bullets = [];
+  enemies = [];
+  fuelDepots = [];
+  particles = [];
+  scrollY = 0;
+  scrollSpeed = 2;
+  score = 0;
+  fuel = 100;
+  lives = 3;
+  frame = 0;
+  gameOver = false;
+  spawnTimer = 0;
+}
+
+// ---------- Input ----------
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === ' ') e.preventDefault();
+  if (e.key.toLowerCase() === 'p' && running && !gameOver) {
+    paused = !paused;
+  }
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+startBtn.addEventListener('click', () => {
+  overlay.style.display = 'none';
+  resetGame();
+  running = true;
+  paused = false;
+});
+
+// ---------- Spawning ----------
+function spawnEntity() {
+  const topY = scrollY - H / 2 - 40;
+  const r = riverAt(topY);
+  const x = r.left + Math.random() * (r.right - r.left - 24) + 12;
+  const roll = Math.random();
+  if (roll < 0.5) {
+    enemies.push({ type: 'ship', x, y: topY, w: 26, h: 16, dir: Math.random() < 0.5 ? -1 : 1, alive: true, speed: 0.6 });
+  } else if (roll < 0.8) {
+    enemies.push({ type: 'helicopter', x, y: topY, w: 24, h: 18, dir: Math.random() < 0.5 ? -1 : 1, alive: true, speed: 1.2, flapTimer: 0 });
+  } else {
+    fuelDepots.push({ x, y: topY, w: 20, h: 30, alive: true });
+  }
+}
+
+// ---------- Update ----------
+function update() {
+  if (!running || paused || gameOver) return;
+  frame++;
+
+  // scroll river
+  scrollY += scrollSpeed;
+  while (segments[segments.length - 1].y > scrollY - H - SEGMENT_H * 2) {
+    genNextSegment(segments[segments.length - 1].y);
+  }
+  segments = segments.filter(s => s.y < scrollY + SEGMENT_H * 2);
+
+  // player movement
+  if (keys['arrowleft'] || keys['a']) player.x -= player.speed;
+  if (keys['arrowright'] || keys['d']) player.x += player.speed;
+  if (keys['arrowup'] || keys['w']) scrollSpeed = Math.min(scrollSpeed + 0.05, 5);
+  else if (keys['arrowdown'] || keys['s']) scrollSpeed = Math.max(scrollSpeed - 0.08, 0.6);
+  else scrollSpeed += (2 - scrollSpeed) * 0.02;
+
+  // shooting
+  if (player.cooldown > 0) player.cooldown--;
+  if ((keys[' ']) && player.cooldown === 0 && player.alive) {
+    bullets.push({ x: player.x, y: scrollY - (H - player.y), vy: -8 });
+    player.cooldown = 10;
+  }
+
+  // fuel consumption
+  fuel -= 0.06 * (scrollSpeed / 2);
+  if (fuel <= 0) {
+    fuel = 0;
+    killPlayer();
+  }
+
+  // bank collision
+  const worldY = scrollY - (H - player.y);
+  const banks = riverAt(worldY);
+  if (player.x - player.w / 2 < banks.left || player.x + player.w / 2 > banks.right) {
+    killPlayer();
+  }
+  player.x = clamp(player.x, 10, W - 10);
+
+  // spawn entities
+  spawnTimer--;
+  if (spawnTimer <= 0) {
+    spawnEntity();
+    spawnTimer = 60 + Math.random() * 40;
+  }
+
+  // update bullets
+  for (const b of bullets) b.y += b.vy;
+  bullets = bullets.filter(b => scrollY - b.y < H + 50);
+
+  // update enemies
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const r = riverAt(e.y);
+    e.x += e.dir * e.speed;
+    if (e.x - e.w / 2 < r.left || e.x + e.w / 2 > r.right) e.dir *= -1;
+    if (e.type === 'helicopter') e.flapTimer++;
+  }
+
+  // remove offscreen entities
+  enemies = enemies.filter(e => scrollY - e.y < H + 80 && e.alive !== false ? true : (scrollY - e.y < H + 80));
+  fuelDepots = fuelDepots.filter(f => scrollY - f.y < H + 80);
+
+  // collisions: bullets vs enemies
+  for (const b of bullets) {
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const sy = H - (scrollY - e.y);
+      const sby = H - (scrollY - b.y);
+      if (Math.abs(b.x - e.x) < e.w / 2 && Math.abs(sby - sy) < e.h / 2) {
+        e.alive = false;
+        b.hit = true;
+        score += e.type === 'ship' ? 30 : 60;
+        spawnParticles(e.x, sy);
+      }
+    }
+    for (const f of fuelDepots) {
+      if (!f.alive) continue;
+      const sy = H - (scrollY - f.y);
+      const sby = H - (scrollY - b.y);
+      if (Math.abs(b.x - f.x) < f.w / 2 && Math.abs(sby - sy) < f.h / 2) {
+        f.alive = false;
+        b.hit = true;
+        score -= 20;
+        spawnParticles(f.x, sy);
+      }
+    }
+  }
+  bullets = bullets.filter(b => !b.hit);
+
+  // collisions: player vs enemies/fuel
+  if (player.alive) {
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const sy = H - (scrollY - e.y);
+      if (Math.abs(player.x - e.x) < (e.w + player.w) / 2 && Math.abs(player.y - sy) < (e.h + player.h) / 2) {
+        e.alive = false;
+        killPlayer();
+      }
+    }
+    for (const f of fuelDepots) {
+      if (!f.alive) continue;
+      const sy = H - (scrollY - f.y);
+      if (Math.abs(player.x - f.x) < (f.w + player.w) / 2 && Math.abs(player.y - sy) < (f.h + player.h) / 2) {
+        fuel = Math.min(100, fuel + 1.2);
+      }
+    }
+  }
+
+  enemies = enemies.filter(e => e.alive);
+
+  // particles
+  for (const p of particles) { p.x += p.vx; p.y += p.vy; p.life--; }
+  particles = particles.filter(p => p.life > 0);
+
+  // score by survival/speed
+  score += scrollSpeed * 0.05;
+
+  scoreEl.textContent = Math.floor(score);
+  fuelEl.textContent = Math.floor(fuel);
+  livesEl.textContent = lives;
+}
+
+function spawnParticles(x, y) {
+  for (let i = 0; i < 10; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 4,
+      vy: (Math.random() - 0.5) * 4,
+      life: 20 + Math.random() * 10
+    });
+  }
+}
+
+function killPlayer() {
+  if (!player.alive) return;
+  player.alive = false;
+  spawnParticles(player.x, player.y);
+  lives--;
+  setTimeout(() => {
+    if (lives <= 0) {
+      gameOver = true;
+      showOverlay('Oyun Bitti\nSkor: ' + Math.floor(score));
+    } else {
+      player.alive = true;
+      player.x = W / 2;
+      fuel = 100;
+    }
+  }, 800);
+}
+
+function showOverlay(text) {
+  overlayText.textContent = text;
+  overlay.style.display = 'flex';
+  startBtn.textContent = 'Tekrar Başla';
+  running = false;
+}
+
+// ---------- Render ----------
+function render() {
+  ctx.fillStyle = '#3a2410';
+  ctx.fillRect(0, 0, W, H);
+
+  // river
+  ctx.fillStyle = '#1864d1';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  for (const s of segments) {
+    const sy = H - (scrollY - s.y);
+    ctx.lineTo(s.left, sy);
+  }
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i];
+    const sy = H - (scrollY - s.y);
+    ctx.lineTo(s.right, sy);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // banks edge highlight
+  ctx.strokeStyle = '#0d3a73';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const sy = H - (scrollY - s.y);
+    if (i === 0) ctx.moveTo(s.left, sy); else ctx.lineTo(s.left, sy);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const sy = H - (scrollY - s.y);
+    if (i === 0) ctx.moveTo(s.right, sy); else ctx.lineTo(s.right, sy);
+  }
+  ctx.stroke();
+
+  // fuel depots
+  for (const f of fuelDepots) {
+    const sy = H - (scrollY - f.y);
+    ctx.fillStyle = '#ffcc00';
+    ctx.fillRect(f.x - f.w / 2, sy - f.h / 2, f.w, f.h);
+    ctx.fillStyle = '#000';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('FUEL', f.x, sy + 3);
+  }
+
+  // enemies
+  for (const e of enemies) {
+    const sy = H - (scrollY - e.y);
+    if (e.type === 'ship') {
+      ctx.fillStyle = '#cc3333';
+      ctx.fillRect(e.x - e.w / 2, sy - e.h / 2, e.w, e.h);
+    } else {
+      ctx.fillStyle = '#888';
+      ctx.fillRect(e.x - e.w / 2, sy - e.h / 2, e.w, e.h);
+      ctx.strokeStyle = '#fff';
+      const blade = Math.sin(e.flapTimer * 0.6) * 12;
+      ctx.beginPath();
+      ctx.moveTo(e.x - blade, sy - e.h / 2 - 2);
+      ctx.lineTo(e.x + blade, sy - e.h / 2 - 2);
+      ctx.stroke();
+    }
+  }
+
+  // bullets
+  ctx.fillStyle = '#fff';
+  for (const b of bullets) {
+    const sy = H - (scrollY - b.y);
+    ctx.fillRect(b.x - 1, sy - 5, 2, 8);
+  }
+
+  // particles
+  for (const p of particles) {
+    ctx.fillStyle = `rgba(255,${100 + Math.floor(Math.random()*100)},0,${Math.max(p.life / 30, 0)})`;
+    ctx.fillRect(p.x, p.y, 3, 3);
+  }
+
+  // player
+  if (player.alive) {
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.fillStyle = '#0f0';
+    ctx.beginPath();
+    ctx.moveTo(0, -player.h / 2);
+    ctx.lineTo(player.w / 2, player.h / 2);
+    ctx.lineTo(0, player.h / 3);
+    ctx.lineTo(-player.w / 2, player.h / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.font = '24px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('DURAKLATILDI', W / 2, H / 2);
+  }
+}
+
+function loop() {
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+
+showOverlay('River Raid');
+loop();
+</script>
+</body>
+</html>

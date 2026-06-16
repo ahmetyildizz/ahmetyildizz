@@ -78,38 +78,44 @@ const overlayText = document.getElementById('overlayText');
 const startBtn = document.getElementById('startBtn');
 
 // ---------- River geometry ----------
-// The river is represented as a list of segments scrolling downward.
-// Each segment has a leftBank and rightBank x-position, generated procedurally.
+// World y is "distance traveled" — it only ever increases as the plane flies
+// forward. Segments are kept sorted ascending by this distance. A segment at
+// distance d is drawn at screen y = H + scrollY - d: the segment the plane is
+// currently over (d == scrollY) sits at the plane (screen bottom); segments
+// further ahead (d > scrollY) sit higher up, scrolling down into view as
+// scrollY catches up; segments already passed (d < scrollY) sit below the
+// screen and get pruned.
 const SEGMENT_H = 20;
-let segments = []; // {y, left, right, bridge:false, narrowing}
+let segments = []; // {y: distance, left, right}
+
+function worldToScreenY(d) { return H + scrollY - d; }
 
 function initRiver() {
   segments = [];
   let left = 60, right = W - 60;
-  for (let y = H; y >= -SEGMENT_H * 4; y -= SEGMENT_H) {
+  for (let y = 0; y <= H + SEGMENT_H * 4; y += SEGMENT_H) {
     segments.push({ y, left, right });
   }
 }
 
-function genNextSegment(topY) {
+function genNextSegment() {
   const last = segments[segments.length - 1];
   let left = last.left, right = last.right;
   // randomly drift banks, keep min width
   const drift = (Math.random() - 0.5) * 14;
   left = clamp(left + drift, 20, W / 2 - 40);
   right = clamp(right + drift, W / 2 + 40, W - 20);
-  // occasionally widen/narrow more drastically (islands not modeled, simple river)
-  segments.push({ y: topY - SEGMENT_H, left, right });
+  segments.push({ y: last.y + SEGMENT_H, left, right });
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-// returns river bank x positions for a given world y by interpolating between segments
+// returns river bank x positions for a given world distance by interpolating between segments
 function riverAt(y) {
   for (let i = 0; i < segments.length - 1; i++) {
     const a = segments[i], b = segments[i + 1];
-    if (y <= a.y && y >= b.y) {
-      const t = (a.y - y) / (a.y - b.y || 1);
+    if (y >= a.y && y <= b.y) {
+      const t = (y - a.y) / (b.y - a.y || 1);
       return {
         left: a.left + (b.left - a.left) * t,
         right: a.right + (b.right - a.right) * t
@@ -172,7 +178,7 @@ startBtn.addEventListener('click', () => {
 
 // ---------- Spawning ----------
 function spawnEntity() {
-  const topY = scrollY - H / 2 - 40;
+  const topY = scrollY + H + 40;
   const r = riverAt(topY);
   const x = r.left + Math.random() * (r.right - r.left - 24) + 12;
   const roll = Math.random();
@@ -192,10 +198,10 @@ function update() {
 
   // scroll river
   scrollY += scrollSpeed;
-  while (segments[segments.length - 1].y > scrollY - H - SEGMENT_H * 2) {
-    genNextSegment(segments[segments.length - 1].y);
+  while (segments[segments.length - 1].y < scrollY + H + SEGMENT_H * 2) {
+    genNextSegment();
   }
-  segments = segments.filter(s => s.y < scrollY + SEGMENT_H * 2);
+  segments = segments.filter(s => s.y > scrollY - SEGMENT_H * 4);
 
   // player movement
   if (keys['arrowleft'] || keys['a']) player.x -= player.speed;
@@ -207,7 +213,7 @@ function update() {
   // shooting
   if (player.cooldown > 0) player.cooldown--;
   if ((keys[' ']) && player.cooldown === 0 && player.alive) {
-    bullets.push({ x: player.x, y: scrollY - (H - player.y), vy: -8 });
+    bullets.push({ x: player.x, y: H + scrollY - player.y, vy: 8 });
     player.cooldown = 10;
   }
 
@@ -219,7 +225,7 @@ function update() {
   }
 
   // bank collision
-  const worldY = scrollY - (H - player.y);
+  const worldY = H + scrollY - player.y;
   const banks = riverAt(worldY);
   if (player.x - player.w / 2 < banks.left || player.x + player.w / 2 > banks.right) {
     killPlayer();
@@ -235,7 +241,7 @@ function update() {
 
   // update bullets
   for (const b of bullets) b.y += b.vy;
-  bullets = bullets.filter(b => scrollY - b.y < H + 50);
+  bullets = bullets.filter(b => worldToScreenY(b.y) > -50);
 
   // update enemies
   for (const e of enemies) {
@@ -247,15 +253,15 @@ function update() {
   }
 
   // remove offscreen entities
-  enemies = enemies.filter(e => scrollY - e.y < H + 80 && e.alive !== false ? true : (scrollY - e.y < H + 80));
-  fuelDepots = fuelDepots.filter(f => scrollY - f.y < H + 80);
+  enemies = enemies.filter(e => worldToScreenY(e.y) < H + 80 && worldToScreenY(e.y) > -80);
+  fuelDepots = fuelDepots.filter(f => worldToScreenY(f.y) < H + 80 && worldToScreenY(f.y) > -80);
 
   // collisions: bullets vs enemies
   for (const b of bullets) {
     for (const e of enemies) {
       if (!e.alive) continue;
-      const sy = H - (scrollY - e.y);
-      const sby = H - (scrollY - b.y);
+      const sy = worldToScreenY(e.y);
+      const sby = worldToScreenY(b.y);
       if (Math.abs(b.x - e.x) < e.w / 2 && Math.abs(sby - sy) < e.h / 2) {
         e.alive = false;
         b.hit = true;
@@ -265,8 +271,8 @@ function update() {
     }
     for (const f of fuelDepots) {
       if (!f.alive) continue;
-      const sy = H - (scrollY - f.y);
-      const sby = H - (scrollY - b.y);
+      const sy = worldToScreenY(f.y);
+      const sby = worldToScreenY(b.y);
       if (Math.abs(b.x - f.x) < f.w / 2 && Math.abs(sby - sy) < f.h / 2) {
         f.alive = false;
         b.hit = true;
@@ -281,7 +287,7 @@ function update() {
   if (player.alive) {
     for (const e of enemies) {
       if (!e.alive) continue;
-      const sy = H - (scrollY - e.y);
+      const sy = worldToScreenY(e.y);
       if (Math.abs(player.x - e.x) < (e.w + player.w) / 2 && Math.abs(player.y - sy) < (e.h + player.h) / 2) {
         e.alive = false;
         killPlayer();
@@ -289,7 +295,7 @@ function update() {
     }
     for (const f of fuelDepots) {
       if (!f.alive) continue;
-      const sy = H - (scrollY - f.y);
+      const sy = worldToScreenY(f.y);
       if (Math.abs(player.x - f.x) < (f.w + player.w) / 2 && Math.abs(player.y - sy) < (f.h + player.h) / 2) {
         fuel = Math.min(100, fuel + 1.2);
       }
@@ -347,63 +353,73 @@ function showOverlay(text) {
 
 // ---------- Render ----------
 function render() {
-  ctx.fillStyle = '#3a2410';
+  ctx.fillStyle = '#2d8c2d';
   ctx.fillRect(0, 0, W, H);
 
   // river
-  ctx.fillStyle = '#1864d1';
+  ctx.fillStyle = '#1830d8';
   ctx.beginPath();
   segments.forEach((s, i) => {
-    const sy = H - (scrollY - s.y);
+    const sy = worldToScreenY(s.y);
     if (i === 0) ctx.moveTo(s.left, sy); else ctx.lineTo(s.left, sy);
   });
   for (let i = segments.length - 1; i >= 0; i--) {
     const s = segments[i];
-    const sy = H - (scrollY - s.y);
+    const sy = worldToScreenY(s.y);
     ctx.lineTo(s.right, sy);
   }
   ctx.closePath();
   ctx.fill();
 
   // banks edge highlight
-  ctx.strokeStyle = '#0d3a73';
+  ctx.strokeStyle = '#0a1f8c';
   ctx.lineWidth = 3;
   ctx.beginPath();
   for (let i = 0; i < segments.length; i++) {
     const s = segments[i];
-    const sy = H - (scrollY - s.y);
+    const sy = worldToScreenY(s.y);
     if (i === 0) ctx.moveTo(s.left, sy); else ctx.lineTo(s.left, sy);
   }
   ctx.stroke();
   ctx.beginPath();
   for (let i = 0; i < segments.length; i++) {
     const s = segments[i];
-    const sy = H - (scrollY - s.y);
+    const sy = worldToScreenY(s.y);
     if (i === 0) ctx.moveTo(s.right, sy); else ctx.lineTo(s.right, sy);
   }
   ctx.stroke();
 
-  // fuel depots
+  // fuel depots (red tank, vertical "FUEL" lettering like the original)
   for (const f of fuelDepots) {
-    const sy = H - (scrollY - f.y);
-    ctx.fillStyle = '#ffcc00';
+    const sy = worldToScreenY(f.y);
+    ctx.fillStyle = '#e0245a';
     ctx.fillRect(f.x - f.w / 2, sy - f.h / 2, f.w, f.h);
-    ctx.fillStyle = '#000';
-    ctx.font = '10px monospace';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('FUEL', f.x, sy + 3);
+    const letters = ['F', 'U', 'E', 'L'];
+    letters.forEach((ch, i) => {
+      ctx.fillText(ch, f.x, sy - f.h / 2 + 10 + i * 9);
+    });
   }
 
   // enemies
   for (const e of enemies) {
-    const sy = H - (scrollY - e.y);
+    const sy = worldToScreenY(e.y);
     if (e.type === 'ship') {
-      ctx.fillStyle = '#cc3333';
+      // dark hull with a lighter deck stripe, like the river tanker sprite
+      ctx.fillStyle = '#444';
       ctx.fillRect(e.x - e.w / 2, sy - e.h / 2, e.w, e.h);
+      ctx.fillStyle = '#999';
+      ctx.fillRect(e.x - e.w / 2 + 3, sy - 2, e.w - 6, 4);
     } else {
-      ctx.fillStyle = '#888';
+      // helicopter: body + cockpit bubble + spinning rotor
+      ctx.fillStyle = '#5a6b3a';
       ctx.fillRect(e.x - e.w / 2, sy - e.h / 2, e.w, e.h);
-      ctx.strokeStyle = '#fff';
+      ctx.fillStyle = '#8fa6e0';
+      ctx.fillRect(e.x - e.w / 2 + 2, sy - 2, 6, 6);
+      ctx.strokeStyle = '#ddd';
+      ctx.lineWidth = 2;
       const blade = Math.sin(e.flapTimer * 0.6) * 12;
       ctx.beginPath();
       ctx.moveTo(e.x - blade, sy - e.h / 2 - 2);
@@ -415,7 +431,7 @@ function render() {
   // bullets
   ctx.fillStyle = '#fff';
   for (const b of bullets) {
-    const sy = H - (scrollY - b.y);
+    const sy = worldToScreenY(b.y);
     ctx.fillRect(b.x - 1, sy - 5, 2, 8);
   }
 
@@ -425,18 +441,25 @@ function render() {
     ctx.fillRect(p.x, p.y, 3, 3);
   }
 
-  // player
+  // player: yellow jet, nose pointing up the river (direction of travel)
   if (player && player.alive) {
+    const w = player.w, h = player.h;
     ctx.save();
     ctx.translate(player.x, player.y);
-    ctx.fillStyle = '#0f0';
+    ctx.fillStyle = '#ffd700';
+    // nose
     ctx.beginPath();
-    ctx.moveTo(0, -player.h / 2);
-    ctx.lineTo(player.w / 2, player.h / 2);
-    ctx.lineTo(0, player.h / 3);
-    ctx.lineTo(-player.w / 2, player.h / 2);
+    ctx.moveTo(0, -h / 2);
+    ctx.lineTo(w * 0.16, -h * 0.12);
+    ctx.lineTo(-w * 0.16, -h * 0.12);
     ctx.closePath();
     ctx.fill();
+    // fuselage
+    ctx.fillRect(-w * 0.08, -h * 0.12, w * 0.16, h * 0.55);
+    // wings
+    ctx.fillRect(-w / 2, h * 0.05, w, h * 0.16);
+    // tail fins
+    ctx.fillRect(-w * 0.3, h * 0.32, w * 0.6, h * 0.16);
     ctx.restore();
   }
 

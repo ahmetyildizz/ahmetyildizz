@@ -120,7 +120,7 @@ function riverAt(y) {
 }
 
 // ---------- Game State ----------
-let player, bullets, enemies, fuelDepots, particles;
+let player = null, bullets = [], enemies = [], fuelDepots = [], particles = [];
 let scrollY = 0;
 let scrollSpeed = 2;
 let score = 0;
@@ -353,11 +353,10 @@ function render() {
   // river
   ctx.fillStyle = '#1864d1';
   ctx.beginPath();
-  ctx.moveTo(0, 0);
-  for (const s of segments) {
+  segments.forEach((s, i) => {
     const sy = H - (scrollY - s.y);
-    ctx.lineTo(s.left, sy);
-  }
+    if (i === 0) ctx.moveTo(s.left, sy); else ctx.lineTo(s.left, sy);
+  });
   for (let i = segments.length - 1; i >= 0; i--) {
     const s = segments[i];
     const sy = H - (scrollY - s.y);
@@ -427,7 +426,7 @@ function render() {
   }
 
   // player
-  if (player.alive) {
+  if (player && player.alive) {
     ctx.save();
     ctx.translate(player.x, player.y);
     ctx.fillStyle = '#0f0';
